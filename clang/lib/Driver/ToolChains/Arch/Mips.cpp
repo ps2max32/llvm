@@ -53,6 +53,10 @@ void mips::getMipsCPUAndABI(const ArgList &Args, const llvm::Triple &Triple,
   if (Triple.getOS() == llvm::Triple::PS2)
     DefMips64CPU = "r5900";
 
+  // R3000A is the default for mipsel-*-irx (PS2 IOP modules).
+  if (Triple.getOS() == llvm::Triple::IRX)
+    DefMips32CPU = "r3000a";
+
   if (Arg *A = Args.getLastArg(options::OPT_march_EQ, options::OPT_mcpu_EQ))
     CPUName = A->getValue();
 
@@ -178,6 +182,9 @@ mips::FloatABI mips::getMipsFloatABI(const Driver &D, const ArgList &Args,
     if (Triple.isOSFreeBSD()) {
       // For FreeBSD, assume "soft" on all flavors of MIPS.
       ABI = mips::FloatABI::Soft;
+    } else if (Triple.getOS() == llvm::Triple::IRX) {
+      // The PS2 IOP (R3000A) has no FPU.
+      ABI = mips::FloatABI::Soft;
     } else {
       // Assume "hard", because it's a default value used by gcc.
       // When we start to recognize specific target MIPS processors,
@@ -287,8 +294,11 @@ void mips::getMIPSTargetFeatures(const Driver &D, const llvm::Triple &Triple,
 
   Arg *ABICallsArg =
       Args.getLastArg(options::OPT_mabicalls, options::OPT_mno_abicalls);
-  UseAbiCalls =
-      !ABICallsArg || ABICallsArg->getOption().matches(options::OPT_mabicalls);
+  // PS2 IOP modules (IRX) are static code without abicalls: the IOP's loader
+  // relocates them and has no GOT.
+  UseAbiCalls = ABICallsArg
+                    ? ABICallsArg->getOption().matches(options::OPT_mabicalls)
+                    : Triple.getOS() != llvm::Triple::IRX;
 
   if (IsN64 && NonPIC && (!ABICallsArg || UseAbiCalls)) {
     D.Diag(diag::warn_drv_unsupported_pic_with_mabicalls)

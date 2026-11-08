@@ -1919,12 +1919,18 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
   std::tie(RelocationModel, PICLevel, IsPIE) =
       ParsePICArgs(getToolChain(), Args);
 
+  // PS2 IOP modules (IRX) default to -mno-abicalls (see
+  // mips::getMIPSTargetFeatures).
+  bool IsIRX = getToolChain().getTriple().getOS() == llvm::Triple::IRX;
   NoABICalls = NoABICalls ||
-               (RelocationModel == llvm::Reloc::Static && ABIName == "n64");
+               (RelocationModel == llvm::Reloc::Static && ABIName == "n64") ||
+               (IsIRX && !ABICalls);
 
   bool WantGPOpt = GPOpt && GPOpt->getOption().matches(options::OPT_mgpopt);
+  // IRX modules default to -mno-gpopt as well: gp is per module, and a
+  // module's exported functions run with their caller's gp.
   // We quietly ignore -mno-gpopt as the backend defaults to -mno-gpopt.
-  if (NoABICalls && (!GPOpt || WantGPOpt)) {
+  if (NoABICalls && (WantGPOpt || (!GPOpt && !IsIRX))) {
     CmdArgs.push_back("-mllvm");
     CmdArgs.push_back("-mgpopt");
 

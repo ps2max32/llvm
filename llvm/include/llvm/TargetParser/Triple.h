@@ -326,6 +326,7 @@ public:
     NVCL,   // NVIDIA OpenCL
     AMDHSA, // AMD HSA Runtime
     PS2,
+    IRX, // PlayStation 2 IOP modules (mipsel-none-irx)
     PS4,
     PS5,
     ELFIAMCU,

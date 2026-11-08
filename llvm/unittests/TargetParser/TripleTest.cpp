@@ -147,6 +147,13 @@ TEST(TripleTest, ParsedIDs) {
   EXPECT_EQ(Triple::Hurd, T.getOS());
   EXPECT_EQ(Triple::GNU, T.getEnvironment());
 
+  // PlayStation 2 IOP modules.
+  T = Triple("mipsel-none-irx");
+  EXPECT_EQ(Triple::mipsel, T.getArch());
+  EXPECT_EQ(Triple::UnknownVendor, T.getVendor());
+  EXPECT_EQ(Triple::IRX, T.getOS());
+  EXPECT_EQ("irx", Triple::getOSTypeName(Triple::IRX));
+
   // PS4 has two spellings for the vendor.
   T = Triple("x86_64-scei-ps4");
   EXPECT_EQ(Triple::x86_64, T.getArch());

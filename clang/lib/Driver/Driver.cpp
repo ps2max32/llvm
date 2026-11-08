@@ -42,6 +42,7 @@
 #include "ToolChains/PPCFreeBSD.h"
 #include "ToolChains/PPCLinux.h"
 #include "ToolChains/PS2.h"
+#include "ToolChains/PS2IOP.h"
 #include "ToolChains/PS4CPU.h"
 #include "ToolChains/SPIRV.h"
 #include "ToolChains/SPIRVOpenMP.h"
@@ -6296,6 +6297,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       break;
     case llvm::Triple::PS2:
       TC = std::make_unique<toolchains::PS2Toolchain>(*this, Target, Args);
+      break;
+    case llvm::Triple::IRX:
+      TC = std::make_unique<toolchains::PS2IOP>(*this, Target, Args);
       break;
     case llvm::Triple::PS4:
       TC = std::make_unique<toolchains::PS4CPU>(*this, Target, Args);
