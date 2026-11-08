@@ -1000,7 +1000,9 @@ void MipsGotSection::build() {
 bool MipsGotSection::isNeeded() const {
   // We add the .got section to the result for dynamic MIPS target because
   // its address and properties are mentioned in the .dynamic section.
-  return !ctx.arg.relocatable;
+  // An IRX (--irx) has none: the IOP loader does not relocate GOT entries,
+  // and GOT relocations are an error there.
+  return !ctx.arg.relocatable && !ctx.arg.irx;
 }
 
 uint64_t MipsGotSection::getGp(const InputFile *f) const {

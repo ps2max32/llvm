@@ -13,6 +13,7 @@
 #include "CallGraphSort.h"
 #include "Config.h"
 #include "InputFiles.h"
+#include "Irx.h"
 #include "LinkerScript.h"
 #include "MapFile.h"
 #include "OutputSections.h"
@@ -220,6 +221,12 @@ void elf::addReservedSymbols(Ctx &ctx) {
   addOptionalRegular(ctx, "__dso_handle", ctx.out.elfHeader.get(), 0,
                      STV_HIDDEN);
 
+  // PS2 IOP modules have their own set.
+  if (ctx.arg.irx) {
+    addIrxReservedSymbols(ctx);
+    return;
+  }
+
   // If linker script do layout we do not need to create any standard symbols.
   if (ctx.script->hasSectionsCommand)
     return;
@@ -312,7 +319,10 @@ template <class ELFT> void Writer<ELFT>::run() {
   for (OutputSection *sec : ctx.outputSections)
     sec->maybeCompress<ELFT>(ctx);
 
-  if (ctx.script->hasSectionsCommand)
+  // An IRX's headers are not loaded.
+  if (ctx.arg.irx)
+    finalizeIrx(ctx);
+  else if (ctx.script->hasSectionsCommand)
     ctx.script->allocateHeaders(ctx.phdrs);
 
   // Remove empty PT_LOAD to avoid causing the dynamic linker to try to mmap a
@@ -320,12 +330,18 @@ template <class ELFT> void Writer<ELFT>::run() {
   // we know the size of the sections.
   removeEmptyPTLoad(ctx, ctx.phdrs);
 
-  if (!ctx.arg.oFormatBinary)
+  if (ctx.arg.irx)
+    fileSize = assignIrxFileOffsets(
+        ctx, (ctx.outputSections.size() + 1) * sizeof(Elf_Shdr),
+        sectionHeaderOff);
+  else if (!ctx.arg.oFormatBinary)
     assignFileOffsets();
   else
     assignFileOffsetsBinary();
 
   setPhdrs();
+  if (ctx.arg.irx)
+    finalizeIrxPhdrs(ctx);
 
   // Handle --print-map(-M)/--Map and --cref. Dump them before checkSections()
   // because the files may be useful in case checkSections() or openFile()
@@ -924,6 +940,9 @@ template <class ELFT> void Writer<ELFT>::setReservedSymbolSections() {
       }
     }
   }
+
+  if (ctx.arg.irx)
+    setIrxReservedSymbolSections(ctx);
 }
 
 // We want to find how similar two ranks are.
@@ -2046,6 +2065,10 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
 
   sortSections();
 
+  // The module information and the relocations of a PS2 IOP module.
+  if (ctx.arg.irx)
+    addIrxSections(ctx);
+
   // Create a list of OutputSections, assign sectionIndex, and populate
   // ctx.in.shStrTab. If -z nosectionheader is specified, drop non-ALLOC
   // sections.
@@ -2329,6 +2352,9 @@ static uint64_t computeFlags(Ctx &ctx, uint64_t flags) {
 // one.
 template <class ELFT>
 SmallVector<std::unique_ptr<PhdrEntry>, 0> Writer<ELFT>::createPhdrs() {
+  if (ctx.arg.irx)
+    return createIrxPhdrs(ctx);
+
   SmallVector<std::unique_ptr<PhdrEntry>, 0> ret;
   auto addHdr = [&, &ctx = ctx](unsigned type, unsigned flags) -> PhdrEntry * {
     ret.push_back(std::make_unique<PhdrEntry>(ctx, type, flags));
@@ -2859,6 +2885,8 @@ static uint64_t getEntryAddr(Ctx &ctx) {
 }
 
 static uint16_t getELFType(Ctx &ctx) {
+  if (ctx.arg.irx)
+    return ET_SCE_IOPRELEXEC;
   if (ctx.arg.isPic)
     return ET_DYN;
   if (ctx.arg.relocatable)

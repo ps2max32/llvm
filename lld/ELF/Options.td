@@ -302,6 +302,9 @@ def ignore_data_address_equality: FF<"ignore-data-address-equality">,
 
 defm image_base: EEq<"image-base", "Set the base address">;
 
+def irx: F<"irx">,
+  HelpText<"Create a PlayStation 2 IOP module (IRX) from MIPS32 objects">;
+
 defm init: Eq<"init", "Specify an initializer function">,
   MetaVarName<"<symbol>">;
 

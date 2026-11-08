@@ -59,7 +59,8 @@ struct RldMapSection : SyntheticSection {
 template <class ELFT> struct AbiFlagsSection : SyntheticSection {
   using Elf_Mips_ABIFlags = llvm::object::Elf_Mips_ABIFlags<ELFT>;
   AbiFlagsSection(Ctx &ctx);
-  bool isNeeded() const override { return needed; }
+  // An IRX (--irx) has none of them.
+  bool isNeeded() const override { return needed && !ctx.arg.irx; }
   size_t getSize() const override { return sizeof(Elf_Mips_ABIFlags); }
   void writeTo(uint8_t *buf) override { memcpy(buf, &flags, sizeof(flags)); }
   Elf_Mips_ABIFlags flags = {};
@@ -70,7 +71,8 @@ template <class ELFT> struct OptionsSection : SyntheticSection {
   using Elf_Mips_Options = llvm::object::Elf_Mips_Options<ELFT>;
   using Elf_Mips_RegInfo = llvm::object::Elf_Mips_RegInfo<ELFT>;
   OptionsSection(Ctx &ctx);
-  bool isNeeded() const override { return needed; }
+  // An IRX (--irx) has none of them.
+  bool isNeeded() const override { return needed && !ctx.arg.irx; }
   size_t getSize() const override {
     return sizeof(Elf_Mips_Options) + sizeof(Elf_Mips_RegInfo);
   }
@@ -82,7 +84,8 @@ template <class ELFT> struct OptionsSection : SyntheticSection {
 template <class ELFT> struct ReginfoSection : SyntheticSection {
   using Elf_Mips_RegInfo = llvm::object::Elf_Mips_RegInfo<ELFT>;
   ReginfoSection(Ctx &ctx);
-  bool isNeeded() const override { return needed; }
+  // An IRX (--irx) has none of them.
+  bool isNeeded() const override { return needed && !ctx.arg.irx; }
   size_t getSize() const override { return sizeof(Elf_Mips_RegInfo); }
   void writeTo(uint8_t *buf) override;
   Elf_Mips_RegInfo reginfo = {};

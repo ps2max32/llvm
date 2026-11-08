@@ -373,6 +373,7 @@ struct Config {
   bool gnuUnique;
   bool ignoreDataAddressEquality;
   bool ignoreFunctionAddressEquality;
+  bool irx;
   bool ltoCSProfileGenerate;
   bool ltoPGOWarnMismatch;
   bool ltoDebugPassManager;
@@ -640,6 +641,9 @@ struct InStruct {
   std::unique_ptr<SyntheticSection> mipsReginfo;
   std::unique_ptr<SyntheticSection> mipsRldMap;
   std::unique_ptr<SyntheticSection> ppc32Got2;
+  // PS2 IOP modules (--irx): .iopmod and the .rel sections of the module.
+  std::unique_ptr<SyntheticSection> iopMod;
+  SmallVector<std::unique_ptr<SyntheticSection>, 0> irxRels;
   // Non-SHF_ALLOC sections
   std::unique_ptr<SyntheticSection> debugNames;
   std::unique_ptr<GdbIndexSection> gdbIndex;
@@ -703,6 +707,11 @@ struct Ctx : CommonLinkerContext {
     Defined *mipsGp;
     Defined *mipsGpDisp;
     Defined *mipsLocalGp;
+
+    // _ftext, _fdata and _fbss of PS2 IOP modules (--irx).
+    Defined *irxFtext;
+    Defined *irxFdata;
+    Defined *irxFbss;
 
     // __global_pointer$ for RISC-V.
     Defined *riscvGlobalPointer;

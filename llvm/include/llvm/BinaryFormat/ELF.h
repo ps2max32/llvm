@@ -123,7 +123,11 @@ enum {
   ET_LOOS = 0xfe00,   // Beginning of operating system-specific codes
   ET_HIOS = 0xfeff,   // Operating system-specific
   ET_LOPROC = 0xff00, // Beginning of processor-specific codes
-  ET_HIPROC = 0xffff  // Processor-specific
+  ET_HIPROC = 0xffff, // Processor-specific
+
+  // PlayStation 2 IOP modules (IRX), MIPS only.
+  ET_SCE_IOPRELEXEC = 0xff80,  // IOP relocatable executable
+  ET_SCE_IOPRELEXEC2 = 0xff81, // The same, with the 2.5.3 loader's relocations
 };
 
 // Versioning
@@ -1236,6 +1240,7 @@ enum : unsigned {
   SHT_MIPS_OPTIONS = 0x7000000d,  // General options
   SHT_MIPS_DWARF = 0x7000001e,    // DWARF debugging section.
   SHT_MIPS_ABIFLAGS = 0x7000002a, // ABI information.
+  SHT_SCE_IOPMOD = 0x70000080,    // PS2 IOP module information (.iopmod).
 
   SHT_MSP430_ATTRIBUTES = 0x70000003U,
 
@@ -1615,6 +1620,7 @@ enum {
   PT_MIPS_RTPROC = 0x70000001,   // Runtime procedure table.
   PT_MIPS_OPTIONS = 0x70000002,  // Options segment.
   PT_MIPS_ABIFLAGS = 0x70000003, // Abiflags segment.
+  PT_SCE_IOPMOD = 0x70000080,    // PS2 IOP module information.
 
   // RISCV program header types.
   PT_RISCV_ATTRIBUTES = 0x70000003,

@@ -27,6 +27,7 @@
 #include "ICF.h"
 #include "InputFiles.h"
 #include "InputSection.h"
+#include "Irx.h"
 #include "LTO.h"
 #include "LinkerScript.h"
 #include "MarkLive.h"
@@ -456,6 +457,19 @@ static void checkOptions(Ctx &ctx) {
 
   if (ctx.arg.zRetpolineplt && ctx.arg.zForceIbt)
     ErrAlways(ctx) << "-z force-ibt may not be used with -z retpolineplt";
+
+  if (ctx.arg.irx) {
+    if (ctx.arg.emachine != EM_MIPS || ctx.arg.ekind != ELF32LEKind)
+      ErrAlways(ctx) << "--irx is only supported for little-endian 32-bit MIPS";
+    if (ctx.arg.relocatable)
+      ErrAlways(ctx) << "-r and --irx may not be used together";
+    if (ctx.arg.shared)
+      ErrAlways(ctx) << "-shared and --irx may not be used together";
+    if (ctx.arg.pie)
+      ErrAlways(ctx) << "-pie and --irx may not be used together";
+    if (ctx.arg.emitRelocs)
+      ErrAlways(ctx) << "--emit-relocs and --irx may not be used together";
+  }
 }
 
 static const char *getReproduceOption(opt::InputArgList &args) {
@@ -1457,6 +1471,7 @@ static void readConfigs(Ctx &ctx, opt::InputArgList &args) {
       args.hasFlag(OPT_eh_frame_hdr, OPT_no_eh_frame_hdr, false);
   ctx.arg.emitLLVM = args.hasArg(OPT_lto_emit_llvm);
   ctx.arg.emitRelocs = args.hasArg(OPT_emit_relocs);
+  ctx.arg.irx = args.hasArg(OPT_irx);
   ctx.arg.enableNewDtags =
       args.hasFlag(OPT_enable_new_dtags, OPT_disable_new_dtags, true);
   ctx.arg.enableNonContiguousRegions =
@@ -2346,6 +2361,9 @@ void LinkerDriver::createFiles(opt::InputArgList &args) {
 
   if (defaultScript && !hasScript)
     readLinkerScript(ctx, *defaultScript);
+  else if (ctx.arg.irx && !hasScript)
+    readLinkerScript(
+        ctx, MemoryBufferRef(getIrxDefaultScript(), "<irx default script>"));
   loadFiles();
   if (files.empty() && !hasInput && errCount(ctx) == 0)
     ErrAlways(ctx) << "no input files";
@@ -3570,11 +3588,15 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
   // optimizations such as DATA_SEGMENT_ALIGN in linker scripts. LLD's use of it
   // is limited to writing trap instructions on the last executable segment.
   ctx.arg.commonPageSize = getCommonPageSize(ctx, args);
+  // An IRX has one PT_LOAD at address 0, which the IOP loader copies to a
+  // 16-byte aligned block: no pages.
+  if (ctx.arg.irx)
+    ctx.arg.maxPageSize = ctx.arg.commonPageSize = 16;
 
   ctx.arg.imageBase = getImageBase(ctx, args);
 
   // This adds a .comment section containing a version string.
-  if (!ctx.arg.relocatable)
+  if (!ctx.arg.relocatable && !ctx.arg.irx)
     ctx.inputSections.push_back(createCommentSection(ctx));
 
   // Split SHF_MERGE and .eh_frame sections into pieces in preparation for garbage collection.

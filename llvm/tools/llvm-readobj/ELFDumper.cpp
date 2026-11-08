@@ -1556,6 +1556,7 @@ static StringRef segmentTypeToString(unsigned Arch, unsigned Type) {
       LLVM_READOBJ_ENUM_CASE(ELF, PT_MIPS_RTPROC);
       LLVM_READOBJ_ENUM_CASE(ELF, PT_MIPS_OPTIONS);
       LLVM_READOBJ_ENUM_CASE(ELF, PT_MIPS_ABIFLAGS);
+      LLVM_READOBJ_ENUM_CASE(ELF, PT_SCE_IOPMOD);
     }
     break;
   case ELF::EM_RISCV:

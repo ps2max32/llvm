@@ -46,6 +46,7 @@ add_lld_library(lldELF
   ICF.cpp
   InputFiles.cpp
   InputSection.cpp
+  Irx.cpp
   LTO.cpp
   LinkerScript.cpp
   MapFile.cpp
