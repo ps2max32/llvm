@@ -18,9 +18,23 @@
 #include "llvm/ADT/StringRef.h"
 #include <memory>
 
+namespace llvm {
+class MemoryBufferRef;
+}
+
 namespace lld::elf {
 struct Ctx;
+struct IrxLibrary;
 struct PhdrEntry;
+
+// ILB files: Sony's description of IOP libraries ("#IOP-ILB#").
+bool isIrxLibrary(llvm::MemoryBufferRef mb);
+void readIrxLibraries(Ctx &ctx, llvm::MemoryBufferRef mb,
+                      SmallVector<IrxLibrary, 0> &out);
+// Reads --irx-export and keeps its entries from LTO; before LTO.
+void readIrxExport(Ctx &ctx);
+// Defines the imported symbols and _exp_<name>; after symbol resolution.
+void addIrxTables(Ctx &ctx);
 
 // The layout used when no linker script is given.
 llvm::StringRef getIrxDefaultScript();

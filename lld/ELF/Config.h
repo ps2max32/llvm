@@ -374,6 +374,7 @@ struct Config {
   bool ignoreDataAddressEquality;
   bool ignoreFunctionAddressEquality;
   bool irx;
+  StringRef irxExport;
   bool ltoCSProfileGenerate;
   bool ltoPGOWarnMismatch;
   bool ltoDebugPassManager;
@@ -599,6 +600,15 @@ struct UndefinedDiag {
   bool isWarning;
 };
 
+// A PS2 IOP library described by an ILB file (--irx): its name, version and
+// entries (index, name), as other modules import it or this one exports it.
+struct IrxLibrary {
+  StringRef file;
+  StringRef name;
+  uint16_t version = 0;
+  SmallVector<std::pair<uint32_t, StringRef>, 0> entries;
+};
+
 // Linker generated sections which can be used as inputs.
 struct InStruct {
   std::unique_ptr<InputSection> attributes;
@@ -644,6 +654,7 @@ struct InStruct {
   // PS2 IOP modules (--irx): .iopmod and the .rel sections of the module.
   std::unique_ptr<SyntheticSection> iopMod;
   SmallVector<std::unique_ptr<SyntheticSection>, 0> irxRels;
+  SmallVector<std::unique_ptr<SyntheticSection>, 0> irxTables;
   // Non-SHF_ALLOC sections
   std::unique_ptr<SyntheticSection> debugNames;
   std::unique_ptr<GdbIndexSection> gdbIndex;
@@ -679,6 +690,10 @@ struct Ctx : CommonLinkerContext {
   SmallVector<OutputSection *, 0> outputSections;
 
   InStruct in;
+  // ILB inputs of a PS2 IOP module (--irx), in command line order.
+  SmallVector<IrxLibrary, 0> irxLibraries;
+  // Its exports (--irx-export).
+  IrxLibrary *irxExport = nullptr;
 
   // Some linker-generated symbols need to be created as
   // Defined symbols.

@@ -250,6 +250,11 @@ void LinkerDriver::addFile(StringRef path, bool withLOption) {
                         {}});
   } else {
     auto magic = identify_magic(mbref.getBuffer());
+    // PS2 IOP import libraries (--irx), text files like linker scripts.
+    if (magic == file_magic::unknown && isIrxLibrary(mbref)) {
+      readIrxLibraries(ctx, mbref, ctx.irxLibraries);
+      return;
+    }
     if (magic == file_magic::unknown) {
       readLinkerScript(ctx, mbref);
       return;
@@ -469,6 +474,8 @@ static void checkOptions(Ctx &ctx) {
       ErrAlways(ctx) << "-pie and --irx may not be used together";
     if (ctx.arg.emitRelocs)
       ErrAlways(ctx) << "--emit-relocs and --irx may not be used together";
+  } else if (!ctx.arg.irxExport.empty()) {
+    ErrAlways(ctx) << "--irx-export may not be used without --irx";
   }
 }
 
@@ -1472,6 +1479,7 @@ static void readConfigs(Ctx &ctx, opt::InputArgList &args) {
   ctx.arg.emitLLVM = args.hasArg(OPT_lto_emit_llvm);
   ctx.arg.emitRelocs = args.hasArg(OPT_emit_relocs);
   ctx.arg.irx = args.hasArg(OPT_irx);
+  ctx.arg.irxExport = args.getLastArgValue(OPT_irx_export);
   ctx.arg.enableNewDtags =
       args.hasFlag(OPT_enable_new_dtags, OPT_disable_new_dtags, true);
   ctx.arg.enableNonContiguousRegions =
@@ -3361,6 +3369,10 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
     if (Defined *sym = dyn_cast_or_null<Defined>(ctx.symtab->find(name)))
       sym->isUsedInRegularObj = true;
 
+  // The same for what a PS2 IOP module exports (--irx-export).
+  if (ctx.arg.irx && !ctx.arg.irxExport.empty())
+    readIrxExport(ctx);
+
   // Mark -init and -fini symbols so that the LTO doesn't eliminate them.
   if (Symbol *sym = dyn_cast_or_null<Defined>(ctx.symtab->find(ctx.arg.init)))
     sym->isUsedInRegularObj = true;
@@ -3543,6 +3555,11 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
       for (InputSectionBase *s : f->getSections())
         ctx.inputSections.push_back(cast<InputSection>(s));
   }
+
+  // The import tables of a PS2 IOP module for the symbols its ILB inputs
+  // provide, and its export table.
+  if (ctx.arg.irx)
+    addIrxTables(ctx);
 
   {
     llvm::TimeTraceScope timeScope("Strip sections");

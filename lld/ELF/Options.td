@@ -304,6 +304,9 @@ defm image_base: EEq<"image-base", "Set the base address">;
 
 def irx: F<"irx">,
   HelpText<"Create a PlayStation 2 IOP module (IRX) from MIPS32 objects">;
+defm irx_export: EEq<"irx-export",
+  "With --irx, write the export table of the library described by this ILB file">,
+  MetaVarName<"<file>">;
 
 defm init: Eq<"init", "Specify an initializer function">,
   MetaVarName<"<symbol>">;

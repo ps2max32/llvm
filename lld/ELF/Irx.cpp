@@ -39,8 +39,10 @@
 #include "Target.h"
 #include "lld/Common/CommonLinkerContext.h"
 #include "lld/Common/Memory.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/MemoryBufferRef.h"
 
 using namespace llvm;
 using namespace llvm::ELF;
@@ -123,6 +125,241 @@ public:
   SmallVector<Entry, 0> entries;
 };
 } // namespace
+
+// ILB files: "#IOP-ILB#" starts a library, then "L <name>", "V <version>"
+// (4 hex digits), "F <flags>", and an "E <index> <name>" line per entry, as in
+// "Reference: Import Libraries" of the SDK's IOP kernel overview. Other lines
+// starting with '#' are comments.
+bool elf::isIrxLibrary(MemoryBufferRef mb) {
+  return mb.getBuffer().starts_with("#IOP-ILB#");
+}
+
+void elf::readIrxLibraries(Ctx &ctx, MemoryBufferRef mb,
+                           SmallVector<IrxLibrary, 0> &out) {
+  StringRef file = mb.getBufferIdentifier();
+  IrxLibrary *lib = nullptr;
+  unsigned lineNo = 0;
+  auto err = [&](const Twine &msg) {
+    Err(ctx) << file << ":" << lineNo << ": " << msg.str();
+  };
+  for (StringRef line : split(mb.getBuffer(), '\n')) {
+    ++lineNo;
+    line = line.trim();
+    if (line.empty())
+      continue;
+    if (line == "#IOP-ILB#") {
+      lib = &out.emplace_back();
+      lib->file = file;
+      continue;
+    }
+    if (line.starts_with("#"))
+      continue;
+    if (!lib) {
+      err("expected #IOP-ILB#");
+      return;
+    }
+    StringRef key, rest;
+    std::tie(key, rest) = line.split(' ');
+    rest = rest.trim();
+    if (key == "L") {
+      if (rest.empty() || rest.size() > 8)
+        err("library name must have 1 to 8 characters");
+      lib->name = rest;
+    } else if (key == "V") {
+      if (rest.getAsInteger(16, lib->version))
+        err("invalid version: " + rest);
+    } else if (key == "F") {
+      // Flags, 0000.
+    } else if (key == "E") {
+      StringRef index, name;
+      std::tie(index, name) = rest.split(' ');
+      uint32_t n;
+      name = name.trim();
+      if (index.getAsInteger(10, n) || name.empty())
+        err("invalid entry: " + line);
+      else
+        lib->entries.push_back({n, name});
+    } else {
+      err("unknown line: " + line);
+    }
+  }
+  for (IrxLibrary &l : out)
+    if (l.name.empty())
+      Err(ctx) << file << ": library without a name (L line)";
+}
+
+namespace {
+// struct irx_import_table / irx_export_table up to the entries: magic, next,
+// version, mode, name[8].
+void writeTableHeader(uint8_t *buf, uint32_t magic, const IrxLibrary &lib) {
+  write32le(buf, magic);
+  write32le(buf + 4, 0);
+  write16le(buf + 8, lib.version);
+  write16le(buf + 10, 0);
+  memset(buf + 12, 0, 8);
+  memcpy(buf + 12, lib.name.data(), std::min<size_t>(lib.name.size(), 8));
+}
+constexpr uint32_t importMagic = 0x41e00000, exportMagic = 0x41c00000;
+constexpr uint32_t jrRa = 0x03e00008;
+constexpr size_t tableHeaderSize = 20;
+
+// The import table of one library: an 8-byte stub per used entry, jr $ra and
+// addiu $zero, $zero, <index>, which the loader turns into a jump to the
+// entry when it links the module; then two zero words.
+class IrxImportSection final : public SyntheticSection {
+public:
+  IrxImportSection(Ctx &ctx, const IrxLibrary &lib)
+      : SyntheticSection(ctx, ".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR,
+                         4),
+        lib(lib) {}
+  size_t getSize() const override {
+    return tableHeaderSize + 8 * indices.size() + 8;
+  }
+  void writeTo(uint8_t *buf) override {
+    writeTableHeader(buf, importMagic, lib);
+    buf += tableHeaderSize;
+    for (uint32_t n : indices) {
+      write32le(buf, jrRa);
+      write32le(buf + 4, 0x24000000 | n);
+      buf += 8;
+    }
+    write32le(buf, 0);
+    write32le(buf + 4, 0);
+  }
+
+  const IrxLibrary &lib;
+  SmallVector<uint32_t, 0> indices;
+};
+
+// The export table: the addresses of the entries, 0 at the end. Entries the
+// ILB leaves out point to a function that only returns, as _retonly in
+// ps2sdk's modules.
+class IrxExportSection final : public SyntheticSection {
+public:
+  IrxExportSection(Ctx &ctx, const IrxLibrary &lib)
+      : SyntheticSection(ctx, ".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR,
+                         4),
+        lib(lib) {}
+  size_t getSize() const override {
+    return tableHeaderSize + 4 * slots.size() + 4 + 8;
+  }
+  uint64_t retOnlyOffset() const { return getSize() - 8; }
+  void writeTo(uint8_t *buf) override {
+    writeTableHeader(buf, exportMagic, lib);
+    for (const Relocation &r : relocations)
+      write32le(buf + r.offset, r.sym->getVA(ctx));
+    write32le(buf + tableHeaderSize + 4 * slots.size(), 0);
+    write32le(buf + retOnlyOffset(), jrRa);
+    write32le(buf + retOnlyOffset() + 4, 0);
+  }
+
+  const IrxLibrary &lib;
+  SmallVector<Symbol *, 0> slots;
+};
+} // namespace
+
+void elf::readIrxExport(Ctx &ctx) {
+  std::optional<MemoryBufferRef> mb = readFile(ctx, ctx.arg.irxExport);
+  if (!mb)
+    return;
+  if (!isIrxLibrary(*mb)) {
+    Err(ctx) << ctx.arg.irxExport << ": not an ILB file (#IOP-ILB#)";
+    return;
+  }
+  SmallVector<IrxLibrary, 0> exp;
+  readIrxLibraries(ctx, *mb, exp);
+  if (exp.size() != 1) {
+    Err(ctx) << ctx.arg.irxExport << ": --irx-export needs one library, not "
+             << Twine(exp.size()).str();
+    return;
+  }
+  ctx.irxExport = make<IrxLibrary>(std::move(exp[0]));
+  // Only the export table refers to them, and it is made after LTO.
+  for (auto [index, name] : ctx.irxExport->entries)
+    if (Symbol *s = ctx.symtab->find(name))
+      s->isUsedInRegularObj = true;
+}
+
+// Defines the symbols that the ILB inputs provide and that are still undefined,
+// as stubs in an import table per library; the first ILB that lists a name
+// provides it, as with archives. With --irx-export, writes the export table at
+// the start of .text and defines _exp_<name>.
+void elf::addIrxTables(Ctx &ctx) {
+  auto define = [&](StringRef name, uint8_t type, uint64_t value, uint64_t size,
+                    SectionBase *sec) {
+    Symbol *s = ctx.symtab->addSymbol(
+        Undefined{ctx.internalFile, name, STB_GLOBAL, STV_DEFAULT, 0});
+    s->resolve(ctx, Defined{ctx, ctx.internalFile, StringRef(), STB_GLOBAL,
+                            STV_DEFAULT, type, value, size, sec});
+    s->isUsedInRegularObj = true;
+    return s;
+  };
+
+  // The import tables.
+  DenseMap<CachedHashStringRef, const IrxLibrary *> provider;
+  for (const IrxLibrary &lib : ctx.irxLibraries) {
+    auto sec = std::make_unique<IrxImportSection>(ctx, lib);
+    SmallVector<StringRef, 0> names;
+    DenseSet<StringRef> seen;
+    for (auto [index, name] : lib.entries) {
+      if (!seen.insert(name).second)
+        continue;
+      Symbol *s = ctx.symtab->find(name);
+      if (!s || !s->isUndefined())
+        continue;
+      sec->indices.push_back(index);
+      names.push_back(name);
+      provider[CachedHashStringRef(name)] = &lib;
+    }
+    if (names.empty())
+      continue;
+    for (auto [i, name] : llvm::enumerate(names))
+      define(name, STT_FUNC, tableHeaderSize + 8 * i, 8, sec.get());
+    ctx.inputSections.push_back(sec.get());
+    ctx.in.irxTables.push_back(std::move(sec));
+  }
+
+  // A name that another library lists too: the first one is used.
+  if (!provider.empty())
+    for (const IrxLibrary &lib : ctx.irxLibraries)
+      for (auto [index, name] : lib.entries) {
+        auto it = provider.find(CachedHashStringRef(name));
+        if (it != provider.end() && it->second != &lib &&
+            it->second->name != lib.name)
+          Warn(ctx) << name << " is imported from " << it->second->name << " ("
+                    << it->second->file << "), and is also in " << lib.name
+                    << " (" << lib.file << ")";
+      }
+
+  if (!ctx.irxExport)
+    return;
+  IrxLibrary *lib = ctx.irxExport;
+  auto sec = std::make_unique<IrxExportSection>(ctx, *lib);
+  uint32_t count = 0;
+  for (auto [index, name] : lib->entries)
+    count = std::max(count, index + 1);
+  sec->slots.assign(count, nullptr);
+  for (auto [index, name] : lib->entries) {
+    Symbol *s = ctx.symtab->find(name);
+    if (!s || !s->isDefined()) {
+      Err(ctx) << ctx.arg.irxExport << ": exported " << name
+               << " is not defined";
+      continue;
+    }
+    sec->slots[index] = s;
+  }
+  Defined *retOnly =
+      make<Defined>(ctx, ctx.internalFile, "", STB_LOCAL, STV_DEFAULT, STT_FUNC,
+                    sec->retOnlyOffset(), 8, sec.get());
+  for (auto [i, s] : llvm::enumerate(sec->slots))
+    sec->addReloc(
+        {R_ABS, R_MIPS_32, tableHeaderSize + 4 * i, 0, s ? s : retOnly});
+  define(ctx.saver.save(Twine("_exp_") + lib->name), STT_OBJECT, 0,
+         sec->getSize(), sec.get());
+  // First in .text, where ps2sdk's modules have it.
+  ctx.inputSections.insert(ctx.inputSections.begin(), sec.get());
+  ctx.in.irxTables.push_back(std::move(sec));
+}
 
 static IopModSection &iopMod(Ctx &ctx) {
   return static_cast<IopModSection &>(*ctx.in.iopMod);
