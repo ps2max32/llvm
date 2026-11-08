@@ -392,6 +392,18 @@ void MarkLive<ELFT, TrackWhyLive>::run() {
     markSymbol(ctx.symtab->find(s), "undefined command line flag");
   for (StringRef s : ctx.script->referencedSymbols)
     markSymbol(ctx.symtab->find(s), "referenced by linker script");
+  // A PS2 IOP module (--irx): its exports, which only the export table made
+  // by the linker refers to, and its irx_id, which only .iopmod does.
+  if (ctx.arg.irx) {
+    if (ctx.irxExport) {
+      markSymbol(ctx.symtab->find(("_exp_" + ctx.irxExport->name).str()),
+                 "the IRX's export table");
+      for (auto [index, name] : ctx.irxExport->entries)
+        markSymbol(ctx.symtab->find(name), "exported by the IRX");
+    }
+    markSymbol(ctx.symtab->find("_irx_id"), "the IRX's module information");
+    markSymbol(ctx.symtab->find("Module"), "the IRX's module information");
+  }
   for (auto [symName, _] : ctx.symtab->cmseSymMap) {
     markSymbol(ctx.symtab->cmseSymMap[symName].sym, "ARM CMSE symbol");
     markSymbol(ctx.symtab->cmseSymMap[symName].acleSeSym, "ARM CMSE symbol");

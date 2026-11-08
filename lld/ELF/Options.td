@@ -304,6 +304,9 @@ defm image_base: EEq<"image-base", "Set the base address">;
 
 def irx: F<"irx">,
   HelpText<"Create a PlayStation 2 IOP module (IRX) from MIPS32 objects">;
+defm irx_relax: BB<"irx-relax",
+  "With --irx, turn jal and j to the module itself into bal and b, which need no relocation (default)",
+  "With --irx, keep jal and j and their relocations">;
 defm irx_export: EEq<"irx-export",
   "With --irx, write the export table of the library described by this ILB file">,
   MetaVarName<"<file>">;

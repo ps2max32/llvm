@@ -1479,6 +1479,7 @@ static void readConfigs(Ctx &ctx, opt::InputArgList &args) {
   ctx.arg.emitLLVM = args.hasArg(OPT_lto_emit_llvm);
   ctx.arg.emitRelocs = args.hasArg(OPT_emit_relocs);
   ctx.arg.irx = args.hasArg(OPT_irx);
+  ctx.arg.irxRelax = args.hasFlag(OPT_irx_relax, OPT_no_irx_relax, true);
   ctx.arg.irxExport = args.getLastArgValue(OPT_irx_export);
   ctx.arg.enableNewDtags =
       args.hasFlag(OPT_enable_new_dtags, OPT_disable_new_dtags, true);
@@ -3369,9 +3370,15 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
     if (Defined *sym = dyn_cast_or_null<Defined>(ctx.symtab->find(name)))
       sym->isUsedInRegularObj = true;
 
-  // The same for what a PS2 IOP module exports (--irx-export).
-  if (ctx.arg.irx && !ctx.arg.irxExport.empty())
-    readIrxExport(ctx);
+  // The same for what a PS2 IOP module exports (--irx-export) and its irx_id,
+  // which only the linker's export table and .iopmod refer to.
+  if (ctx.arg.irx) {
+    if (!ctx.arg.irxExport.empty())
+      readIrxExport(ctx);
+    for (StringRef name : {"_irx_id", "Module"})
+      if (Defined *sym = dyn_cast_or_null<Defined>(ctx.symtab->find(name)))
+        sym->isUsedInRegularObj = true;
+  }
 
   // Mark -init and -fini symbols so that the LTO doesn't eliminate them.
   if (Symbol *sym = dyn_cast_or_null<Defined>(ctx.symtab->find(ctx.arg.init)))

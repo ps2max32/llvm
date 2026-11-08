@@ -3,7 +3,7 @@
 
 # RUN: rm -rf %t && split-file %s %t && cd %t
 # RUN: llvm-mc -filetype=obj -triple=mipsel -mcpu=mips1 a.s -o a.o
-# RUN: ld.lld --irx a.o -o a.irx
+# RUN: ld.lld --irx --no-irx-relax a.o -o a.irx
 # RUN: llvm-readelf -h -l -S -r -s -x .iopmod -x .text -x .rodata -x .data a.irx \
 # RUN:   | FileCheck %s
 
@@ -83,7 +83,7 @@
 # CHECK-NEXT: 0x00000060 74657374 00
 
 ## -s leaves out the symbol table; the relocations stay.
-# RUN: ld.lld --irx -s a.o -o s.irx
+# RUN: ld.lld --irx --no-irx-relax -s a.o -o s.irx
 # RUN: llvm-readelf -S -r s.irx | FileCheck --check-prefix=STRIP %s
 
 # STRIP:      [ 6] .shstrtab   STRTAB 00000000 0000f5 00004c 00     0 0 1
@@ -100,6 +100,20 @@
 # RUN: llvm-mc -filetype=obj -triple=mipsel -mcpu=mips1 lo16.s -o lo16.o
 # RUN: not ld.lld --irx lo16.o -o /dev/null 2>&1 | FileCheck --check-prefix=LO16 %s
 # LO16: error: lo16.o:(.text+0x8): --irx: R_MIPS_LO16 without a R_MIPS_HI16 before it
+
+## --irx-relax (the default): a jal or j within +-128 KiB becomes bal or b,
+## PC-relative, without a relocation; one further away stays.
+# RUN: llvm-mc -filetype=obj -triple=mipsel -mcpu=mips1 relax.s -o relax.o
+# RUN: ld.lld --irx relax.o -o relax.irx
+# RUN: llvm-readelf -r -x .text relax.irx | FileCheck --check-prefix=RELAX %s
+# RELAX:      Relocation section '.rel.text' at offset {{.*}} contains 1 entries:
+# RELAX-NEXT: Offset     Info    Type
+# RELAX-NEXT: 00000010  00000004 R_MIPS_26
+# RELAX-EMPTY:
+## bal +5 and b +3 to near (0x18), jal far (0x20020).
+# RELAX:      Hex dump of section '.text':
+# RELAX-NEXT: 0x00000000 05001104 00000000 03000010 00000000
+# RELAX-NEXT: 0x00000010 0880000c 00000000 0800e003 00000000
 
 # RUN: not ld.lld --irx -r a.o -o /dev/null 2>&1 | FileCheck --check-prefix=REL %s
 # REL: error: -r and --irx may not be used together
@@ -142,6 +156,25 @@ name:
   .bss
 buf:
   .space 16
+
+#--- relax.s
+  .set noreorder
+  .text
+  .globl _start
+_start:
+  jal   near
+  nop
+  j     near
+  nop
+  jal   far
+  nop
+near:
+  jr    $ra
+  nop
+  .space 0x20000
+far:
+  jr    $ra
+  nop
 
 #--- got.s
   .text

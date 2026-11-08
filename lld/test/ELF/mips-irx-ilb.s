@@ -4,7 +4,7 @@
 
 # RUN: rm -rf %t && split-file %s %t && cd %t
 # RUN: llvm-mc -filetype=obj -triple=mipsel -mcpu=mips1 a.s -o a.o
-# RUN: ld.lld --irx a.o lib.ilb other.ilb dup.ilb --irx-export=exports.ilb \
+# RUN: ld.lld --irx --no-irx-relax a.o lib.ilb other.ilb dup.ilb --irx-export=exports.ilb \
 # RUN:   -o a.irx 2>&1 | FileCheck --check-prefix=WARN %s
 # RUN: llvm-readelf -r -s -x .text a.irx | FileCheck %s
 
@@ -24,41 +24,58 @@
 ## ReleaseLibraryEntries nor getchar, printf once.
 # CHECK:      00000040     0 NOTYPE  GLOBAL DEFAULT     2 _start
 # CHECK-NEXT: 00000000    52 OBJECT  GLOBAL DEFAULT     2 _exp_test
-# CHECK-NEXT: 00000084     8 FUNC    GLOBAL DEFAULT     2 RegisterLibraryEntries
-# CHECK-NEXT: 000000b4     8 FUNC    GLOBAL DEFAULT     2 printf
-# CHECK-NEXT: 000000e4     8 FUNC    GLOBAL DEFAULT     2 foo
+# CHECK-NEXT: 00000080     8 FUNC    GLOBAL DEFAULT     2 RegisterLibraryEntries
+# CHECK-NEXT: 000000a4     8 FUNC    GLOBAL DEFAULT     2 printf
+# CHECK-NEXT: 000000c8     8 FUNC    GLOBAL DEFAULT     2 foo
 # CHECK-NEXT: 00000064     0 NOTYPE  GLOBAL DEFAULT     2 mine
 
 ## The export table first: magic, next, version 1.2, name, the entries (1 to 3
 ## point to a function that only returns, at 0x2c), 0. Then the code, then the
 ## import tables: magic, next, version, name, jr $ra + addiu $0, $0, <index>
-## per entry, two zero words; the padding between them is trap instructions.
+## per entry, two zero words, one after the other.
 # CHECK:      Hex dump of section '.text':
 # CHECK-NEXT: 0x00000000 0000c041 00000000 02010000 74657374
 # CHECK-NEXT: 0x00000010 00000000 40000000 2c000000 2c000000
 # CHECK-NEXT: 0x00000020 2c000000 64000000 00000000 0800e003
 # CHECK-NEXT: 0x00000030 00000000 01001704 01001704 01001704
-# CHECK-NEXT: 0x00000040 0000043c 2100000c 00008424 2d00000c
-# CHECK-NEXT: 0x00000050 00000000 3900000c 00000000 0800e003
-# CHECK-NEXT: 0x00000060 00000000 0800e003 00000000 01001704
-# CHECK-NEXT: 0x00000070 0000e041 00000000 01010000 6c6f6164
-# CHECK-NEXT: 0x00000080 636f7265 0800e003 06000024 00000000
-# CHECK-NEXT: 0x00000090 00000000 01001704 01001704 01001704
-# CHECK-NEXT: 0x000000a0 0000e041 00000000 02010000 73746469
-# CHECK-NEXT: 0x000000b0 6f000000 0800e003 04000024 00000000
-# CHECK-NEXT: 0x000000c0 00000000 01001704 01001704 01001704
-# CHECK-NEXT: 0x000000d0 0000e041 00000000 01020000 6f746865
-# CHECK-NEXT: 0x000000e0 72000000 0800e003 0a000024 00000000
-# CHECK-NEXT: 0x000000f0 00000000
+# CHECK-NEXT: 0x00000040 0000043c 2000000c 00008424 2900000c
+# CHECK-NEXT: 0x00000050 00000000 3200000c 00000000 0800e003
+# CHECK-NEXT: 0x00000060 00000000 0800e003 00000000 0000e041
+# CHECK-NEXT: 0x00000070 00000000 01010000 6c6f6164 636f7265
+# CHECK-NEXT: 0x00000080 0800e003 06000024 00000000 00000000
+# CHECK-NEXT: 0x00000090 0000e041 00000000 02010000 73746469
+# CHECK-NEXT: 0x000000a0 6f000000 0800e003 04000024 00000000
+# CHECK-NEXT: 0x000000b0 00000000 0000e041 00000000 01020000
+# CHECK-NEXT: 0x000000c0 6f746865 72000000 0800e003 0a000024
+# CHECK-NEXT: 0x000000d0 00000000 00000000
 
-## With LTO, what only the export table refers to is kept.
+## With LTO, what only the export table and .iopmod refer to is kept.
 # RUN: llvm-as lto.ll -o lto.o
 # RUN: ld.lld --irx lto.o --irx-export=exports.ilb -o lto.irx
-# RUN: llvm-readelf -s -x .text lto.irx | FileCheck --check-prefix=LTO %s
+# RUN: llvm-readelf -s -x .iopmod -x .text lto.irx | FileCheck --check-prefix=LTO %s
 # LTO:      GLOBAL DEFAULT 2 _start
 # LTO:      GLOBAL DEFAULT 2 mine
+# LTO:      GLOBAL DEFAULT 3 _irx_id
+## moduleinfo: _irx_id at 0x50, version 1.2.
+# LTO:      Hex dump of section '.iopmod':
+# LTO-NEXT: 0x00000000 50000000 40000000 50800000 50000000
+# LTO-NEXT: 0x00000010 10000000 00000000 020100
 # LTO:      Hex dump of section '.text':
 # LTO-NEXT: 0x00000000 0000c041 00000000 02010000 74657374
+
+## --gc-sections keeps the export table, what only it and .iopmod refer to.
+# RUN: llvm-mc -filetype=obj -triple=mipsel -mcpu=mips1 gc.s -o gc.o
+# RUN: ld.lld --irx --gc-sections gc.o --irx-export=exports.ilb -o gc.irx
+# RUN: llvm-readelf -s -x .iopmod gc.irx | FileCheck --check-prefix=GC %s
+# GC-NOT:  dead
+# GC:      00000034 0 NOTYPE GLOBAL DEFAULT 2 _start
+# GC-NEXT: 00000040 0 NOTYPE GLOBAL DEFAULT 2 mine
+# GC-NEXT: 00000050 0 NOTYPE GLOBAL DEFAULT 3 _irx_id
+# GC-NEXT: 00000000 52 OBJECT GLOBAL DEFAULT 2 _exp_test
+# GC-NOT:  dead
+## moduleinfo: _irx_id at 0x50.
+# GC:      Hex dump of section '.iopmod':
+# GC-NEXT: 0x00000000 50000000
 
 ## Errors.
 # RUN: not ld.lld --irx a.o lib.ilb other.ilb --irx-export=bad-export.ilb \
@@ -127,9 +144,32 @@ F 0000
 E 000 _start
 E 004 mine
 
+#--- gc.s
+  .section .text._start,"ax",@progbits
+  .globl _start
+_start:
+  jr    $ra
+  nop
+  .section .text.mine,"ax",@progbits
+  .globl mine
+mine:
+  jr    $ra
+  nop
+  .section .text.dead,"ax",@progbits
+  .globl dead
+dead:
+  jr    $ra
+  nop
+  .section .data._irx_id,"aw",@progbits
+  .globl _irx_id
+_irx_id:
+  .word 0
+  .short 0x0102, 0
+
 #--- lto.ll
 target datalayout = "e-m:m-p:32:32-i8:8:32-i16:16:32-i64:64-n32-S64"
 target triple = "mipsel-none-irx"
+@_irx_id = global { ptr, i16 } { ptr null, i16 258 }
 define void @_start() { ret void }
 define void @mine() { ret void }
 

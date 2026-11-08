@@ -48,6 +48,8 @@ void finalizeIrx(Ctx &ctx);
 // Returns the file size; sets shOff, the offset of the section header table.
 uint64_t assignIrxFileOffsets(Ctx &ctx, uint64_t shdrSize, uint64_t &shOff);
 void finalizeIrxPhdrs(Ctx &ctx);
+// After the sections are written: the branches of --irx-relax.
+void writeIrxBranches(Ctx &ctx);
 } // namespace lld::elf
 
 #endif

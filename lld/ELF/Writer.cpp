@@ -371,6 +371,8 @@ template <class ELFT> void Writer<ELFT>::run() {
         writeTrapInstr();
       writeHeader();
       writeSections();
+      if (ctx.arg.irx)
+        writeIrxBranches(ctx);
     } else {
       writeSectionsBinary();
     }

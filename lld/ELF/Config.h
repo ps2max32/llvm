@@ -374,6 +374,7 @@ struct Config {
   bool ignoreDataAddressEquality;
   bool ignoreFunctionAddressEquality;
   bool irx;
+  bool irxRelax;
   StringRef irxExport;
   bool ltoCSProfileGenerate;
   bool ltoPGOWarnMismatch;
@@ -694,6 +695,8 @@ struct Ctx : CommonLinkerContext {
   SmallVector<IrxLibrary, 0> irxLibraries;
   // Its exports (--irx-export).
   IrxLibrary *irxExport = nullptr;
+  // The addresses of the jal and j that --irx-relax turns into bal and b.
+  SmallVector<uint64_t, 0> irxBranches;
 
   // Some linker-generated symbols need to be created as
   // Defined symbols.

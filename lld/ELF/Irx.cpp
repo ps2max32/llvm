@@ -50,18 +50,20 @@ using namespace llvm::support::endian;
 using namespace lld;
 using namespace lld::elf;
 
-// The layout of ps2sdk's linkfile for IOP modules, which iopfixup expects:
-// each input section 16-byte aligned, the first object's .text first (it may
-// hold the export table), small data between DATA and BSS.
+// The layout of ps2sdk's linkfile for IOP modules: the first object's .text
+// first, small data between DATA and BSS, the input sections of data 16-byte
+// aligned (code may count on it for DMA). Code only as aligned as it asks:
+// with a section per function, 16 bytes each would grow a module by a few
+// percent. DATA and BSS start 16-byte aligned, as the loader wants.
 static const char irxDefaultScript[] = R"(
 ENTRY(_start)
 SECTIONS {
-  .text 0 : SUBALIGN(16) { *(.text .text.*) *(.stub) }
-  .rodata : SUBALIGN(16) { *(.rodata .rodata.*) }
+  .text 0 : { *(.text .text.*) *(.stub) }
+  .rodata : ALIGN(16) SUBALIGN(16) { *(.rodata .rodata.*) }
   .data : SUBALIGN(16) { *(.data .data.*) }
   .sdata : { *(.sdata .sdata.*) *(.lit8) *(.lit4) }
   .sbss : { *(.sbss .sbss.*) *(.scommon) }
-  .bss : SUBALIGN(16) { *(.bss .bss.*) *(COMMON) }
+  .bss : ALIGN(16) SUBALIGN(16) { *(.bss .bss.*) *(COMMON) }
   /DISCARD/ : {
     *(.MIPS.abiflags) *(.reginfo) *(.pdr) *(.comment) *(.gnu.attributes)
     *(.mdebug.*) *(.note.*) *(.llvm_addrsig)
@@ -102,6 +104,7 @@ class IrxRelSection final : public SyntheticSection {
 public:
   struct Entry {
     const InputSection *sec;
+    const Relocation *rel;
     uint64_t offset;
     RelType type;
   };
@@ -502,7 +505,7 @@ void elf::addIrxSections(Ctx &ctx) {
         case IrxRel::Skip:
           break;
         case IrxRel::Emit:
-          rel->entries.push_back({isec, r.offset, r.type});
+          rel->entries.push_back({isec, &r, r.offset, r.type});
           break;
         case IrxRel::Error:
           Err(ctx) << isec->getLocation(r.offset) << ": --irx: relocation "
@@ -667,6 +670,28 @@ void elf::finalizeIrx(Ctx &ctx) {
     break;
   }
 
+  // --irx-relax: a jal or j whose target is within the reach of a branch
+  // (+-128 KiB) becomes bal or b, PC-relative: the same delay slot, the same
+  // $ra, and no relocation for the loader. Their entries go, the
+  // instructions are written in writeIrxBranches().
+  if (ctx.arg.irxRelax) {
+    for (auto &sec : ctx.in.irxRels) {
+      auto &rel = static_cast<IrxRelSection &>(*sec);
+      llvm::erase_if(rel.entries, [&](const IrxRelSection::Entry &e) {
+        if (e.type != R_MIPS_26)
+          return false;
+        uint64_t p = e.sec->getVA(e.offset);
+        int64_t d =
+            (int64_t)e.sec->getRelocTargetVA(ctx, *e.rel, p) - (int64_t)(p + 4);
+        if ((d & 3) || !isInt<18>(d))
+          return false;
+        ctx.irxBranches.push_back(p);
+        return true;
+      });
+      rel.getParent()->size = rel.getSize();
+    }
+  }
+
   uint32_t symtab =
       ctx.in.symTab ? ctx.in.symTab->getParent()->sectionIndex : 0;
   for (auto &sec : ctx.in.irxRels) {
@@ -725,6 +750,35 @@ uint64_t elf::assignIrxFileOffsets(Ctx &ctx, uint64_t shdrSize,
     if (!(os->flags & SHF_ALLOC) && isLate(os) && !isStaticRelSecType(os->type))
       place(os);
   return off;
+}
+
+// The jal and j of --irx-relax as bal (bgezal $zero) and b (beq $zero, $zero),
+// over the instructions the relocations wrote.
+void elf::writeIrxBranches(Ctx &ctx) {
+  for (uint64_t p : ctx.irxBranches) {
+    OutputSection *os = nullptr;
+    for (OutputSection *o : ctx.outputSections)
+      if ((o->flags & SHF_ALLOC) && o->type != SHT_NOBITS && o->addr <= p &&
+          p < o->addr + o->size)
+        os = o;
+    if (!os)
+      continue;
+    uint8_t *loc = ctx.bufferStart + os->offset + (p - os->addr);
+    uint32_t insn = read32le(loc);
+    // The target, as the jal or j has it: a word index in the 256 MiB region.
+    uint64_t t = ((p + 4) & 0xf0000000) | ((insn & 0x3ffffff) << 2);
+    uint32_t off = (uint32_t)((int64_t)(t - (p + 4)) >> 2) & 0xffff;
+    switch (insn >> 26) {
+    case 3: // jal
+      write32le(loc, 0x04110000 | off);
+      break;
+    case 2: // j
+      write32le(loc, 0x10000000 | off);
+      break;
+    default:
+      Err(ctx) << "--irx-relax: no jal or j at 0x" << utohexstr(p);
+    }
+  }
 }
 
 // The module information header takes no memory.
