@@ -22,12 +22,25 @@
 // UNWIND-NOT: "-funwind-tables
 
 // The link: ld.lld --irx, no startup files or libraries.
-// RUN: %clang -### --target=mipsel-none-irx --ld-path=ld.lld %s -o foo.irx 2>&1 \
-// RUN:   | FileCheck --check-prefix=LINK %s
+// RUN: %clang -### --target=mipsel-none-irx --ld-path=ld.lld %s -o foo.irx \
+// RUN:   -resource-dir=%S/Inputs/resource_dir 2>&1 | FileCheck --check-prefix=LINK %s
 // LINK: ld.lld{{(.exe)?}}" "-m" "elf32ltsmip" "--irx" "{{[^"]*}}.o" "-o" "foo.irx"
 
-// RUN: %clang -### --target=mipsel-none-irx --ld-path=ld.lld %s -r -o foo.o 2>&1 \
-// RUN:   | FileCheck --check-prefix=PARTIAL %s
+// compiler-rt's builtins, when there are any.
+// RUN: %clang -### --target=mipsel-none-irx --ld-path=ld.lld %s -o foo.irx \
+// RUN:   -resource-dir=%S/Inputs/resource_dir_with_per_target_subdir 2>&1 \
+// RUN:   | FileCheck --check-prefix=BUILTINS %s
+// BUILTINS: ld.lld{{(.exe)?}}" "-m" "elf32ltsmip" "--irx" {{.*}}"{{[^"]*}}.o"
+// BUILTINS-SAME: "{{[^"]*}}mipsel-none-irx{{/|\\\\}}libclang_rt.builtins.a" "-o" "foo.irx"
+
+// With -flto the code generator gets the target's features (its ELF flags).
+// RUN: %clang -### --target=mipsel-none-irx --ld-path=ld.lld -flto %s -o foo.irx 2>&1 \
+// RUN:   | FileCheck --check-prefix=LTO %s
+// LTO: "-plugin-opt=mcpu=r3000a"
+// LTO: "-plugin-opt=-mattr=+noabicalls,+soft-float"
+
+// RUN: %clang -### --target=mipsel-none-irx --ld-path=ld.lld %s -r -o foo.o \
+// RUN:   -resource-dir=%S/Inputs/resource_dir 2>&1 | FileCheck --check-prefix=PARTIAL %s
 // PARTIAL: ld.lld{{(.exe)?}}" "-m" "elf32ltsmip" "{{[^"]*}}.o" "-r" "-o" "foo.o"
 
 // Headers: clang's own, then the sysroot's.

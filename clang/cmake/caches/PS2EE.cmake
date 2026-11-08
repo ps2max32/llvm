@@ -19,8 +19,8 @@ set(LLVM_ENABLE_RUNTIMES "compiler-rt" CACHE STRING "")
 
 set(LLVM_DEFAULT_TARGET_TRIPLE "mips64el-scei-ps2" CACHE STRING "")
 
-# Builtins for PS2 EE (R5900)
-set(LLVM_BUILTIN_TARGETS "mips64el-scei-ps2" CACHE STRING "")
+# Builtins for PS2 EE (R5900) and for PS2 IOP modules (R3000A, mipsel-none-irx)
+set(LLVM_BUILTIN_TARGETS "mips64el-scei-ps2;mipsel-none-irx" CACHE STRING "")
 
 set(BUILTINS_mips64el-scei-ps2_CMAKE_SYSTEM_NAME Generic CACHE STRING "")
 set(BUILTINS_mips64el-scei-ps2_CMAKE_C_FLAGS "-ffreestanding" CACHE STRING "")
@@ -29,6 +29,16 @@ set(BUILTINS_mips64el-scei-ps2_CMAKE_ASM_FLAGS "" CACHE STRING "")
 set(BUILTINS_mips64el-scei-ps2_COMPILER_RT_BAREMETAL_BUILD ON CACHE BOOL "")
 set(BUILTINS_mips64el-scei-ps2_COMPILER_RT_BUILD_CRT ON CACHE BOOL "")
 set(BUILTINS_mips64el-scei-ps2_COMPILER_RT_OS_DIR "ps2" CACHE STRING "")
+
+# IOP modules are static code: no -fPIC (on MIPS it means abicalls and a GOT,
+# which the IOP loader cannot relocate)
+set(BUILTINS_mipsel-none-irx_CMAKE_SYSTEM_NAME Generic CACHE STRING "")
+set(BUILTINS_mipsel-none-irx_CMAKE_C_FLAGS "-ffreestanding" CACHE STRING "")
+set(BUILTINS_mipsel-none-irx_CMAKE_CXX_FLAGS "-ffreestanding" CACHE STRING "")
+set(BUILTINS_mipsel-none-irx_CMAKE_ASM_FLAGS "" CACHE STRING "")
+set(BUILTINS_mipsel-none-irx_COMPILER_RT_BAREMETAL_BUILD ON CACHE BOOL "")
+set(BUILTINS_mipsel-none-irx_COMPILER_RT_BUILTINS_ENABLE_PIC OFF CACHE BOOL "")
+set(BUILTINS_mipsel-none-irx_COMPILER_RT_OS_DIR "irx" CACHE STRING "")
 
 # Disable components not needed for bare-metal
 set(COMPILER_RT_BUILD_SANITIZERS OFF CACHE BOOL "")
@@ -64,5 +74,6 @@ set(LLVM_DISTRIBUTION_COMPONENTS
   lld
   clang-resource-headers
   builtins-mips64el-scei-ps2
+  builtins-mipsel-none-irx
   ${LLVM_TOOLCHAIN_TOOLS}
   CACHE STRING "")

@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PS2IOP.h"
+#include "Arch/Mips.h"
 #include "clang/Driver/CommonArgs.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
@@ -14,6 +15,7 @@
 #include "clang/Options/Options.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/VirtualFileSystem.h"
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -72,7 +74,7 @@ void tools::ps2iop::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("elf32ltsmip");
   // A partial link (-r) stays a relocatable object; everything else is an
   // IRX. IRX modules have no startup files or C library: they import what
-  // they use from other modules.
+  // they use from other modules (ILB inputs).
   if (!Args.hasArg(options::OPT_r))
     CmdArgs.push_back("--irx");
 
@@ -82,10 +84,26 @@ void tools::ps2iop::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   Args.addAllArgs(CmdArgs, {options::OPT_u, options::OPT_T_Group,
                             options::OPT_s, options::OPT_t});
 
-  if (auto LTO = TC.getLTOMode(Args); LTO != LTOK_None)
+  if (auto LTO = TC.getLTOMode(Args); LTO != LTOK_None) {
     addLTOOptions(TC, Args, CmdArgs, Output, Inputs, LTO == LTOK_Thin);
+    // The LTO code generator's own features, which its object's ELF flags
+    // come from: no abicalls, soft float.
+    std::vector<StringRef> Features;
+    mips::getMIPSTargetFeatures(TC.getDriver(), TC.getTriple(), Args, Features);
+    CmdArgs.push_back(
+        Args.MakeArgString("-plugin-opt=-mattr=" + llvm::join(Features, ",")));
+  }
 
   AddLinkerInputs(TC, Inputs, Args, CmdArgs, JA);
+
+  // compiler-rt's builtins (64-bit division, soft float), when they were
+  // built for this target.
+  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs) &&
+      !Args.hasArg(options::OPT_r)) {
+    std::string Builtins = TC.getCompilerRT(Args, "builtins");
+    if (TC.getVFS().exists(Builtins))
+      CmdArgs.push_back(Args.MakeArgString(Builtins));
+  }
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
