@@ -1,0 +1,161 @@
+# RUN: llc -mtriple=mipsel-unknown-elf -mcpu=r3000a -verify-machineinstrs \
+# RUN:   -run-pass=mips-delay-slot-filler %s -o - | FileCheck %s
+
+# The R3000A has no load interlock: the instruction executed after a load must
+# not read its result, also when the load is in a branch delay slot.
+
+---
+# The instruction behind the load reads its result and would be the first one
+# left in the successor.
+# CHECK-LABEL: name: succ_read
+# CHECK:       bb.0:
+# CHECK:         J %bb.1, implicit-def $r1 {
+# CHECK-NEXT:      $r0 = SLL $r0, 0
+# CHECK:       bb.1:
+# CHECK:         $r3 = LHu $r4, 0
+# CHECK-NEXT:    $r2 = ADDu $r3, $r5
+name:            succ_read
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r4, $r5
+    J %bb.1, implicit-def $r1
+
+  bb.1:
+    liveins: $r4, $r5
+    $r3 = LHu $r4, 0 :: (load (s16))
+    $r2 = ADDu $r3, $r5
+    BEQ $r2, $r0, %bb.3, implicit-def $r1
+
+  bb.2:
+    liveins: $r4, $r5
+    J %bb.1, implicit-def $r1
+
+  bb.3:
+    PseudoReturn undef $r31
+...
+---
+# Another instruction is left in front of the reader: the load can move.
+# CHECK-LABEL: name: succ_no_read
+# CHECK:       bb.0:
+# CHECK:         J %bb.1, implicit-def $r1 {
+# CHECK-NEXT:      $r3 = LHu $r4, 0
+# CHECK:       bb.1:
+# CHECK-NOT:     LHu
+# CHECK:         $r6 = ADDiu $r5, 1
+# CHECK:         J %bb.1, implicit-def $r1 {
+# CHECK-NEXT:      $r3 = LHu $r4, 0
+name:            succ_no_read
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r4, $r5
+    J %bb.1, implicit-def $r1
+
+  bb.1:
+    liveins: $r4, $r5
+    $r3 = LHu $r4, 0 :: (load (s16))
+    $r6 = ADDiu $r5, 1
+    $r2 = ADDu $r3, $r6
+    BEQ $r2, $r0, %bb.3, implicit-def $r1
+
+  bb.2:
+    liveins: $r4, $r5
+    J %bb.1, implicit-def $r1
+
+  bb.3:
+    PseudoReturn undef $r31
+...
+---
+# The fall-through successor: a load from the constant pool may be speculated, but the
+# BEQ behind it reads its result.
+# CHECK-LABEL: name: fallthrough_read
+# CHECK:       bb.0:
+# CHECK:         BEQ $r4, $r0, %bb.2, implicit-def $r1 {
+# CHECK-NEXT:      $r0 = SLL $r0, 0
+# CHECK:       bb.1:
+# CHECK:         $r3 = LW $r5, 0
+name:            fallthrough_read
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    successors: %bb.2(0x10000000), %bb.1(0x70000000)
+    liveins: $r4, $r5
+    BEQ $r4, $r0, %bb.2, implicit-def $r1
+
+  bb.1:
+    liveins: $r5
+    $r3 = LW $r5, 0 :: (load (s32) from constant-pool)
+    BEQ $r3, $r0, %bb.3, implicit-def $r1
+
+  bb.2:
+    PseudoReturn undef $r31
+
+  bb.3:
+    PseudoReturn undef $r31
+...
+---
+# The first instruction of the target is not one that is executed: it does not
+# separate the load from the reader. The ADDu, which is no load, can move.
+# CHECK-LABEL: name: target_meta
+# CHECK:       bb.0:
+# CHECK:         $r3 = LW $r4, 0
+# CHECK-NEXT:    J %bb.2, implicit-def $r1 {
+# CHECK-NEXT:      $r3 = ADDu $r3, $r5
+name:            target_meta
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r4, $r5
+    $r3 = LW $r4, 0 :: (load (s32))
+    J %bb.2, implicit-def $r1
+
+  bb.1:
+    liveins: $r5
+    $r3 = ADDiu $r5, 3
+
+  bb.2:
+    liveins: $r3, $r5
+    $r2 = IMPLICIT_DEF
+    $r3 = ADDu $r3, $r5
+    $r2 = ADDiu $r3, 1
+    PseudoReturn undef $r31, implicit $r2
+...
+---
+# The load fills the slot of the first branch while the ADDiu separates it from
+# the reader; then the ADDiu fills the slot of the second one.
+# CHECK-LABEL: name: target_changes
+# CHECK:       bb.0:
+# CHECK:         BEQ $r5, $r0, %bb.2, implicit-def $r1 {
+# CHECK-NEXT:      $r3 = LW $r4, 0
+# CHECK:       bb.2:
+# CHECK:         $r0 = SLL $r0, 0
+# CHECK-NEXT:    $r7 = ADDu $r3, $r5
+# CHECK-NEXT:    BEQ $r7, $r0, %bb.4, implicit-def $r1 {
+# CHECK-NEXT:      $r2 = ADDiu $r5, 1
+name:            target_changes
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r4, $r5
+    $r3 = LW $r4, 0 :: (load (s32))
+    BEQ $r5, $r0, %bb.2, implicit-def $r1
+
+  bb.1:
+    liveins: $r3, $r5
+    $r5 = ADDiu $r5, 3
+
+  bb.2:
+    liveins: $r3, $r5
+    $r2 = ADDiu $r5, 1
+    $r7 = ADDu $r3, $r5
+    BEQ $r7, $r0, %bb.4, implicit-def $r1
+
+  bb.3:
+    liveins: $r2
+    PseudoReturn undef $r31, implicit $r2
+
+  bb.4:
+    liveins: $r2
+    PseudoReturn undef $r31, implicit $r2
+...
